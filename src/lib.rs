@@ -18,6 +18,8 @@ use anyhow::Context;
 use bitcoincore_rpc::{Auth, Client, RpcApi};
 use log::{debug, error, warn};
 use std::ffi::OsStr;
+use std::fs::File;
+use std::io::Read;
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -73,6 +75,18 @@ pub struct ConnectParams {
     pub rpc_socket: SocketAddrV4,
     /// p2p connection url, is some if the node started with p2p enabled
     pub p2p_socket: Option<SocketAddrV4>,
+}
+
+impl ConnectParams {
+    /// Return the user and password values from cookie file
+    pub fn get_cookie_values(&self) -> anyhow::Result<(Option<String>, Option<String>)> {
+        let mut cookie_file = File::open(&self.cookie_file)?;
+        let mut cookie = String::new();
+        cookie_file.read_to_string(&mut cookie)?;
+
+        let values: Vec<&str> = cookie.splitn(2, ':').collect();
+        Ok((Some(values[0].into()), Some(values[1].into())))
+    }
 }
 
 /// Enum to specify p2p settings
@@ -504,6 +518,8 @@ mod test {
     use crate::exe_path;
     use crate::{get_available_port, BitcoinD, Conf, LOCAL_IP, P2P};
     use bitcoincore_rpc::RpcApi;
+    use std::fs::File;
+    use std::io::Read;
     use std::net::SocketAddrV4;
     use tempfile::TempDir;
 
@@ -723,6 +739,30 @@ mod test {
         let _ = client.generate_to_address(1, &address).unwrap();
         let info = bitcoind.client.get_blockchain_info().unwrap();
         assert_eq!(1, info.blocks);
+    }
+
+    #[test]
+    fn test_get_cookie_user_and_pass() {
+        let exe = init();
+        let bitcoind = BitcoinD::new(exe).unwrap();
+
+        let mut cookie_file = File::open(&bitcoind.params.cookie_file).unwrap();
+        let mut cookie = String::new();
+        cookie_file.read_to_string(&mut cookie).unwrap();
+
+        let cookie_values: Vec<&str> = cookie.splitn(2, ":").collect();
+
+        let result_values: (Option<String>, Option<String>) =
+            bitcoind.params.get_cookie_values().unwrap();
+
+        assert_eq!(
+            cookie_values.first().unwrap(),
+            &result_values.0.unwrap().as_str()
+        );
+        assert_eq!(
+            cookie_values.last().unwrap(),
+            &result_values.1.unwrap().as_str()
+        );
     }
 
     fn peers_connected(client: &Client) -> usize {
